@@ -21,7 +21,10 @@ import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
 import android.preference.PreferenceManager;
+import android.text.TextUtils;
 
 public class Config {
     public static final String PREF_KEY_PROVIDER = "provider";
@@ -36,30 +39,39 @@ public class Config {
     public static final String PREF_KEY_ICON_PACK = "icon_pack";
     public static final String PREF_KEY_LAST_ALARM = "last_alarm";
     public static final String PREF_KEY_UPDATE_ERROR = "update_error";
+    public static final String PREF_KEY_OWM_API_KEY = "owm_api_key";
+    public static final String PREF_KEY_LOCKSCREEN_ENABLED = "lockscreen_weather_enabled";
+    public static final String PREF_KEY_LOCKSCREEN_STYLE = "lockscreen_weather_style";
+    public static final String PREF_KEY_BACKGROUND_LOCATION = "background_location";
+
+    public static final String DEFAULT_PROVIDER = "1";
+    public static final String DEFAULT_UNITS = "0";
+    public static final String DEFAULT_UPDATE_INTERVAL = "2";
+    public static final String DEFAULT_ICON_PACK = "org.omnirom.omnijaws.outline";
+    public static final String LOCKSCREEN_STYLE_COMPACT = "compact";
+    public static final String LOCKSCREEN_STYLE_SLICE = "slice";
 
     public static AbstractWeatherProvider getProvider(Context context) {
         SharedPreferences prefs = PreferenceManager
                 .getDefaultSharedPreferences(context);
 
-        switch (prefs.getString(PREF_KEY_PROVIDER, "0"))
+        switch (prefs.getString(PREF_KEY_PROVIDER, DEFAULT_PROVIDER))
         {
             case "1":
                 return new METNorwayProvider(context);
             case "2":
-                return new GismeteoProvider(context);
             case "3":
-                return new AccuWeatherProvider(context);
             case "4":
-                return new DarkSkyProvider(context);
             case "5":
-                return new TheWeatherChannelProvider(context);
             case "7":
-                return new WeatherbitProvider(context);
             case "8":
-                return new ForecaProvider(context);
+                // Legacy providers remain source-compatible but are not exposed by the
+                // Android 12 UI. Use the key-free MET Norway provider for old values.
+                return new METNorwayProvider(context);
             case "0":
-            default:
                 return new OpenWeatherMapProvider(context);
+            default:
+                return new METNorwayProvider(context);
         }
     }
 
@@ -67,26 +79,22 @@ public class Config {
         SharedPreferences prefs = PreferenceManager
                 .getDefaultSharedPreferences(context);
 
-        String provider = prefs.getString(PREF_KEY_PROVIDER, "0");
+        String provider = prefs.getString(PREF_KEY_PROVIDER, DEFAULT_PROVIDER);
         switch (provider)
         {
             case "1":
                 return "MET Norway";
             case "2":
-                return "Gismeteo";
             case "3":
-                return "AccuWeather";
             case "4":
-                return "Dark Sky";
             case "5":
-                return "The Weather Channel";
             case "7":
-                return "Weatherbit";
             case "8":
-                return "Foreca";
+                return "MET Norway";
             case "0":
-            default:
                 return "OpenWeatherMap";
+            default:
+                return "MET Norway";
         }
     }
 
@@ -94,7 +102,7 @@ public class Config {
         SharedPreferences prefs = PreferenceManager
                 .getDefaultSharedPreferences(context);
 
-        return prefs.getString(PREF_KEY_UNITS, "0").equals("0");
+        return DEFAULT_UNITS.equals(prefs.getString(PREF_KEY_UNITS, DEFAULT_UNITS));
     }
 
     public static boolean isCustomLocation(Context context) {
@@ -193,15 +201,21 @@ public class Config {
         SharedPreferences prefs = PreferenceManager
                 .getDefaultSharedPreferences(context);
 
-        String valueString = prefs.getString(PREF_KEY_UPDATE_INTERVAL, "2");
-        return Integer.valueOf(valueString);
+        String valueString = prefs.getString(PREF_KEY_UPDATE_INTERVAL,
+                DEFAULT_UPDATE_INTERVAL);
+        try {
+            int value = Integer.parseInt(valueString);
+            return value >= 1 && value <= 12 ? value : 2;
+        } catch (NumberFormatException e) {
+            return 2;
+        }
     }
 
     public static String getIconPack(Context context) {
         SharedPreferences prefs = PreferenceManager
                 .getDefaultSharedPreferences(context);
 
-        return prefs.getString(PREF_KEY_ICON_PACK, null);
+        return prefs.getString(PREF_KEY_ICON_PACK, DEFAULT_ICON_PACK);
     }
 
     public static void setIconPack(Context context, String value) {
@@ -239,11 +253,78 @@ public class Config {
         prefs.edit().putBoolean(PREF_KEY_UPDATE_ERROR, value).commit();
     }
 
+    public static String getOpenWeatherMapApiKey(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        String key = prefs.getString(PREF_KEY_OWM_API_KEY, "");
+        return key == null ? "" : key.trim();
+    }
+
+    public static boolean isProviderReady(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        return isProviderReady(context,
+                prefs.getString(PREF_KEY_PROVIDER, DEFAULT_PROVIDER));
+    }
+
+    public static boolean isProviderReady(Context context, String provider) {
+        return !"0".equals(provider) || !TextUtils.isEmpty(getOpenWeatherMapApiKey(context));
+    }
+
+    public static boolean hasForegroundLocationPermission(Context context) {
+        return context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED
+                || context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    public static boolean hasBackgroundLocationPermission(Context context) {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+                || context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    public static boolean canScheduleUpdates(Context context) {
+        if (!isEnabled(context) || !isProviderReady(context)) {
+            return false;
+        }
+        if (isCustomLocation(context)) {
+            return !TextUtils.isEmpty(getLocationId(context))
+                    && !TextUtils.isEmpty(getLocationName(context));
+        }
+        return hasForegroundLocationPermission(context)
+                && hasBackgroundLocationPermission(context);
+    }
+
+    public static boolean isLockscreenWeatherEnabled(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        return isEnabled(context) && prefs.getBoolean(PREF_KEY_LOCKSCREEN_ENABLED, false);
+    }
+
+    public static String getLockscreenWeatherStyle(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        String value = prefs.getString(PREF_KEY_LOCKSCREEN_STYLE, LOCKSCREEN_STYLE_COMPACT);
+        return LOCKSCREEN_STYLE_SLICE.equals(value) ? LOCKSCREEN_STYLE_SLICE
+                : LOCKSCREEN_STYLE_COMPACT;
+    }
+
+    public static boolean isBackgroundLocationRequested(Context context) {
+        return PreferenceManager.getDefaultSharedPreferences(context)
+                .getBoolean(PREF_KEY_BACKGROUND_LOCATION, false);
+    }
+
+    public static void notifySettingsChanged(Context context) {
+        context.getContentResolver().notifyChange(
+                Uri.parse("content://" + WeatherContentProvider.AUTHORITY + "/settings"), null);
+    }
+
     public static boolean isSetupDone(Context context) {
-        if (context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
+        // A manually selected city is a complete setup and must not require any
+        // location permission. Automatic mode accepts either approximate or precise
+        // foreground location on Android 12.
+        if (isCustomLocation(context)
+                && !TextUtils.isEmpty(getLocationId(context))
+                && !TextUtils.isEmpty(getLocationName(context))) {
             return true;
         }
-        return false;
+        return hasForegroundLocationPermission(context);
     }
 }

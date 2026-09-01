@@ -55,4 +55,16 @@
   <string name="omnijaws_current_text">现在</string>
   <string name="show_background_title">背景阴影</string>
   <string name="weather_config_title">服务设置</string>
+  <string name="owm_api_key_title">OpenWeatherMap API 密钥</string>
+  <string name="owm_api_key_summary">仅使用你自己的密钥，ROM 不附带共享密钥</string>
+  <string name="owm_api_key_set">已配置 API 密钥</string>
+  <string name="owm_api_key_unset">未配置 API 密钥</string>
+  <string name="background_location_title">允许后台定位</string>
+  <string name="background_location_summary">应用不可见时自动更新需要此权限</string>
+  <string name="lockscreen_weather_title">锁屏天气</string>
+  <string name="lockscreen_weather_summary">在锁屏时钟下显示天气</string>
+  <string name="lockscreen_weather_style_title">锁屏天气样式</string>
+  <string name="lockscreen_weather_style_compact">紧凑行</string>
+  <string name="lockscreen_weather_style_slice">Keyguard Slice</string>
+  <string name="location_permission_explanation">只有在启用天气服务后，才会使用大致或精确位置。后台定位是单独的可选权限。</string>
 </resources>

@@ -2,12 +2,7 @@
 
 package org.omnirom.omnijaws;
 
-import static java.net.HttpURLConnection.HTTP_NOT_AUTHORITATIVE;
-import static java.net.HttpURLConnection.HTTP_OK;
-
 import android.content.Context;
-import android.location.Address;
-import android.location.Geocoder;
 import android.location.Location;
 import android.net.Uri;
 import android.util.Log;
@@ -18,11 +13,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.omnirom.omnijaws.WeatherInfo.DayForecast;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -31,7 +21,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
-import java.io.IOException;
 import java.util.TimeZone;
 
 
@@ -43,11 +32,17 @@ public class METNorwayProvider extends AbstractWeatherProvider {
     private static final String PART_COORDINATES =
             "lat=%f&lon=%f";
     private static final String URL_PLACES =
-            "http://api.geonames.org/searchJSON?q=%s&lang=%s&username=omnijaws&isNameRequired=true";
+            "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5"
+                    + "&addressdetails=1&accept-language=%s&q=%s";
+    private static final String URL_REVERSE =
+            "https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1"
+                    + "&zoom=10&accept-language=%s&lat=%f&lon=%f";
 
-    private static final SimpleDateFormat gmt0Format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
-    private static final SimpleDateFormat userTimeZoneFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
-    private static final SimpleDateFormat dayFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+    private final SimpleDateFormat mGmt0Format =
+            new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
+    private final SimpleDateFormat mUserTimeZoneFormat =
+            new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
+    private final SimpleDateFormat mDayFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
 
     public METNorwayProvider(Context context) {
         super(context);
@@ -61,15 +56,13 @@ public class METNorwayProvider extends AbstractWeatherProvider {
 
     public List<WeatherInfo.WeatherLocation> getLocations(String input) {
         String lang = Locale.getDefault().getLanguage().replaceFirst("_", "-");
-        String url = String.format(URL_PLACES, Uri.encode(input), lang);
+        String url = String.format(URL_PLACES, lang, Uri.encode(input));
         String response = retrieve(url);
         if (response == null) {
             return null;
         }
-        log(TAG, "URL = " + url + " returning a response of " + response);
-
         try {
-            JSONArray jsonResults = new JSONObject(response).getJSONArray("geonames");
+            JSONArray jsonResults = new JSONArray(response);
             ArrayList<WeatherInfo.WeatherLocation> results = new ArrayList<>(jsonResults.length());
             int count = jsonResults.length();
 
@@ -77,21 +70,46 @@ public class METNorwayProvider extends AbstractWeatherProvider {
                 JSONObject result = jsonResults.getJSONObject(i);
                 WeatherInfo.WeatherLocation location = new WeatherInfo.WeatherLocation();
 
-                String city = result.getString("name");
-                String area = result.getString("adminName1");
+                double latitude = result.getDouble("lat");
+                double longitude = result.getDouble("lon");
+                if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+                    continue;
+                }
+                JSONObject address = result.optJSONObject("address");
+                String city = firstNonEmpty(address, "city", "town", "village", "municipality",
+                        "suburb", "county");
+                if (TextUtils.isEmpty(city)) {
+                    city = result.optString("display_name", input);
+                }
 
-                location.id = String.format(Locale.US, PART_COORDINATES, result.getDouble("lat"), result.getDouble("lng"));
+                location.id = String.format(Locale.US, PART_COORDINATES, latitude, longitude);
                 location.city = city;
-                location.countryId = city.equals(area) ? result.getString("countryName") : result.getString("countryName") + ", " + area;
+                location.countryId = address == null ? ""
+                        : address.optString("country_code", "").toUpperCase(Locale.US);
+                location.country = address == null ? "" : address.optString("country", "");
+                location.postal = address == null ? "" : address.optString("postcode", "");
                 results.add(location);
             }
 
             return results;
         } catch (JSONException e) {
-            Log.w(TAG, "Received malformed location data (input=" + input + ")", e);
+            Log.w(TAG, "Received malformed location data", e);
         }
 
         return null;
+    }
+
+    private static String firstNonEmpty(JSONObject object, String... keys) {
+        if (object == null) {
+            return "";
+        }
+        for (String key : keys) {
+            String value = object.optString(key, "");
+            if (!TextUtils.isEmpty(value)) {
+                return value;
+            }
+        }
+        return "";
     }
 
     public WeatherInfo getCustomWeather(String id, boolean metric) {
@@ -104,8 +122,6 @@ public class METNorwayProvider extends AbstractWeatherProvider {
         if (response == null) {
             return null;
         }
-        log(TAG, "URL = " + url + " returning a response of " + response);
-
         try {
             JSONArray timeseries = new JSONObject(response).getJSONObject("properties").getJSONArray("timeseries");
             JSONObject weather = timeseries.getJSONObject(0).getJSONObject("data").getJSONObject("instant").getJSONObject("details");
@@ -141,10 +157,9 @@ public class METNorwayProvider extends AbstractWeatherProvider {
                     parseForecasts(timeseries, metric),
                     System.currentTimeMillis());
 
-            log(TAG, "Weather updated: " + w);
             return w;
         } catch (JSONException e) {
-            Log.w(TAG, "Received malformed weather data (coordinates = " + coordinates + ")", e);
+            Log.w(TAG, "Received malformed weather data", e);
         }
 
         return null;
@@ -333,46 +348,14 @@ public class METNorwayProvider extends AbstractWeatherProvider {
         return SYMBOL_CODE_MAPPING.getOrDefault(condition, 0);
     }
 
-    @Override
-    protected String retrieve(String url) {
-        HttpURLConnection request = null;
-        try {
-            request = (HttpURLConnection) new URL(url).openConnection();
-            request.setRequestProperty("User-Agent", "OmniJawsApp/1.0");
-            int code = request.getResponseCode();
-            if (!(code == HTTP_OK || code == HTTP_NOT_AUTHORITATIVE)) {
-                log(TAG, "HttpStatus: " + code + " for url: " + url);
-                return null;
-            }
-            BufferedReader response = new BufferedReader(
-                    new InputStreamReader(request.getInputStream()));
-            String inputLine;
-            StringBuilder entity = new StringBuilder();
-            while ((inputLine = response.readLine()) != null) {
-                entity.append(inputLine);
-            }
-            response.close();
-            return entity.toString();
-        } catch (MalformedURLException m) {
-            Log.e(TAG, "Got malformed url " + url);
-        } catch (IOException e) {
-            Log.e(TAG, "Couldn't retrieve data from url " + url, e);
-        } finally {
-            if (request != null) {
-                request.disconnect();
-            }
-        }
-        return null;
-    }
-
     private void initTimeZoneFormat() {
-        gmt0Format.setTimeZone(TimeZone.getTimeZone("GMT"));
-        userTimeZoneFormat.setTimeZone(TimeZone.getDefault());
+        mGmt0Format.setTimeZone(TimeZone.getTimeZone("GMT"));
+        mUserTimeZoneFormat.setTimeZone(TimeZone.getDefault());
     }
 
     private String convertTimeZone(String tmp) {
         try {
-            return userTimeZoneFormat.format(gmt0Format.parse(tmp));
+            return mUserTimeZoneFormat.format(mGmt0Format.parse(tmp));
         } catch (ParseException e) {
             return tmp;
         }
@@ -384,7 +367,7 @@ public class METNorwayProvider extends AbstractWeatherProvider {
         if(i > 0) {
             calendar.add(Calendar.DATE, i);
         }
-        return dayFormat.format(calendar.getTime());
+        return mDayFormat.format(calendar.getTime());
     }
 
     private Boolean isMorningOrAfternoon(String time, boolean hasOneHour) {
@@ -407,16 +390,30 @@ public class METNorwayProvider extends AbstractWeatherProvider {
     }
 
     private String getNameLocality(String coordinate) {
-        double latitude = Double.valueOf(coordinate.substring(4, coordinate.indexOf("&")));
-        double longitude = Double.valueOf(coordinate.substring(coordinate.indexOf("lon=") + 4));
-        Geocoder geocoder = new Geocoder(mContext.getApplicationContext(), Locale.getDefault());
         try {
-            List<Address> listAddresses = geocoder.getFromLocation(latitude, longitude, 1);
-            if(listAddresses != null && listAddresses.size() > 0){
-                return listAddresses.get(0).getLocality();
+            int separator = coordinate.indexOf('&');
+            if (!coordinate.startsWith("lat=") || separator <= 4
+                    || !coordinate.startsWith("lon=", separator + 1)) {
+                return null;
             }
-        } catch (IOException e) {
-            e.printStackTrace();
+            double latitude = Double.parseDouble(coordinate.substring(4, separator));
+            double longitude = Double.parseDouble(coordinate.substring(separator + 5));
+            if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+                return null;
+            }
+            String language = Locale.getDefault().getLanguage().replaceFirst("_", "-");
+            String response = retrieve(String.format(Locale.US, URL_REVERSE,
+                    Uri.encode(language), latitude, longitude));
+            if (response == null) {
+                return null;
+            }
+            JSONObject result = new JSONObject(response);
+            JSONObject address = result.optJSONObject("address");
+            String city = firstNonEmpty(address, "city", "town", "village", "municipality",
+                    "suburb", "county");
+            return TextUtils.isEmpty(city) ? result.optString("display_name", "") : city;
+        } catch (JSONException | NumberFormatException e) {
+            Log.w(TAG, "Received malformed reverse-location data");
         }
         return null;
     }

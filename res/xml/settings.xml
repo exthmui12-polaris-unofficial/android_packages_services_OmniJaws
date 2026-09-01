@@ -25,6 +25,7 @@
         android:title="@string/enable_title" />
 
     <ListPreference
+        android:defaultValue="2"
         android:entries="@array/update_interval_entries"
         android:entryValues="@array/update_interval_values"
         android:key="update_interval"
@@ -36,12 +37,21 @@
         android:persistent="false" />
 
     <ListPreference
+        android:defaultValue="1"
         android:entries="@array/provider_entries"
         android:entryValues="@array/provider_values"
         android:key="provider"
         android:title="@string/provider_title" />
 
+    <EditTextPreference
+        android:key="owm_api_key"
+        android:title="@string/owm_api_key_title"
+        android:summary="@string/owm_api_key_unset"
+        android:inputType="textNoSuggestions|textPassword"
+        android:persistent="true" />
+
     <ListPreference
+        android:defaultValue="0"
         android:entries="@array/units_entries"
         android:entryValues="@array/units_values"
         android:key="units"
@@ -61,5 +71,25 @@
     <ListPreference
         android:key="weather_icon_pack"
         android:title="@string/weather_icon_pack_title" />
+
+    <SwitchPreference
+        android:defaultValue="false"
+        android:key="background_location"
+        android:persistent="false"
+        android:title="@string/background_location_title"
+        android:summary="@string/background_location_summary" />
+
+    <SwitchPreference
+        android:defaultValue="false"
+        android:key="lockscreen_weather_enabled"
+        android:title="@string/lockscreen_weather_title"
+        android:summary="@string/lockscreen_weather_summary" />
+
+    <ListPreference
+        android:defaultValue="compact"
+        android:entries="@array/lockscreen_weather_style_entries"
+        android:entryValues="@array/lockscreen_weather_style_values"
+        android:key="lockscreen_weather_style"
+        android:title="@string/lockscreen_weather_style_title" />
 
 </PreferenceScreen>

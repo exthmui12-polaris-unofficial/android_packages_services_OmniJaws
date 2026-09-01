@@ -19,9 +19,13 @@ package org.omnirom.omnijaws;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Date;
+import java.util.TimeZone;
+import java.text.SimpleDateFormat;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -29,7 +33,6 @@ import org.json.JSONObject;
 import org.omnirom.omnijaws.WeatherInfo.DayForecast;
 
 import android.content.Context;
-import android.content.res.Resources;
 import android.location.Location;
 import android.net.Uri;
 import android.text.TextUtils;
@@ -39,39 +42,39 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
     private static final String TAG = "OpenWeatherMapProvider";
 
     private static final int FORECAST_DAYS = 5;
+    private static final int FORECAST_ENTRY_LIMIT = 40;
     private static final String SELECTION_LOCATION = "lat=%f&lon=%f";
     private static final String SELECTION_ID = "id=%s";
 
     private static final String URL_LOCATION =
-            "http://api.openweathermap.org/data/2.5/find?q=%s&mode=json&lang=%s&appid=%s";
+            "https://api.openweathermap.org/data/2.5/find?q=%s&mode=json&lang=%s&appid=%s";
     private static final String URL_WEATHER =
-            "http://api.openweathermap.org/data/2.5/weather?%s&mode=json&units=%s&lang=%s&appid=%s";
+            "https://api.openweathermap.org/data/2.5/weather?%s&mode=json&units=%s&lang=%s&appid=%s";
     private static final String URL_FORECAST =
-            "http://api.openweathermap.org/data/2.5/forecast?%s&mode=json&units=%s&lang=%s&cnt=" + FORECAST_DAYS + "&appid=%s";
+            "https://api.openweathermap.org/data/2.5/forecast?%s&mode=json&units=%s&lang=%s&cnt="
+                    + FORECAST_ENTRY_LIMIT + "&appid=%s";
 
     private List<String> mKeys = new ArrayList<String>();
-    private boolean mHasAPIKey;
     private int mRequestNumber;
     private int sunrise;
     private int sunset;
 
     public OpenWeatherMapProvider(Context context) {
         super(context);
-        mHasAPIKey = getAPIKey() != null;
     }
 
     public List<WeatherInfo.WeatherLocation> getLocations(String input) {
-        if (!mHasAPIKey) {
+        String apiKey = getAPIKey();
+        if (TextUtils.isEmpty(apiKey)) {
             return null;
         }
         mRequestNumber++;
-        String url = String.format(URL_LOCATION, Uri.encode(input), getLanguageCode(), getAPIKey());
+        String url = String.format(URL_LOCATION, Uri.encode(input), getLanguageCode(),
+                Uri.encode(apiKey));
         String response = retrieve(url);
         if (response == null) {
             return null;
         }
-
-        log(TAG, "URL = " + url + " returning a response of " + response);
 
         try {
             JSONArray jsonResults = new JSONObject(response).getJSONArray("list");
@@ -90,7 +93,7 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
 
             return results;
         } catch (JSONException e) {
-            Log.w(TAG, "Received malformed location data (input=" + input + ")", e);
+            Log.w(TAG, "Received malformed location data");
         }
 
         return null;
@@ -108,27 +111,26 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
     }
 
     private WeatherInfo handleWeatherRequest(String selection, boolean metric) {
-        if (!mHasAPIKey) {
+        String apiKey = getAPIKey();
+        if (TextUtils.isEmpty(apiKey)) {
             return null;
         }
         mRequestNumber++;
         String units = metric ? "metric" : "imperial";
         String locale = getLanguageCode();
-        String conditionUrl = String.format(Locale.US, URL_WEATHER, selection, units, locale, getAPIKey());
+        String conditionUrl = String.format(Locale.US, URL_WEATHER, selection, units, locale,
+                Uri.encode(apiKey));
         String conditionResponse = retrieve(conditionUrl);
         if (conditionResponse == null) {
             return null;
         }
-        log(TAG, "Condition URL = " + conditionUrl + " returning a response of " + conditionResponse);
-
         mRequestNumber++;
-        String forecastUrl = String.format(Locale.US, URL_FORECAST, selection, units, locale, getAPIKey());
+        String forecastUrl = String.format(Locale.US, URL_FORECAST, selection, units, locale,
+                Uri.encode(apiKey));
         String forecastResponse = retrieve(forecastUrl);
         if (forecastResponse == null) {
             return null;
         }
-        log(TAG, "Forcast URL = " + forecastUrl + " returning a response of " + forecastResponse);
-
         try {
             JSONObject conditions = new JSONObject(conditionResponse);
             JSONObject weather = conditions.getJSONArray("weather").getJSONObject(0);
@@ -136,8 +138,12 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
             JSONObject windData = conditions.getJSONObject("wind");
             sunrise = conditions.getJSONObject("sys").getInt("sunrise");
             sunset = conditions.getJSONObject("sys").getInt("sunset");
-            ArrayList<DayForecast> forecasts =
-                    parseForecasts(new JSONObject(forecastResponse).getJSONArray("list"), metric);
+            JSONObject forecastData = new JSONObject(forecastResponse);
+            JSONObject forecastCity = forecastData.optJSONObject("city");
+            int timezoneOffset = forecastCity == null ? 0
+                    : forecastCity.optInt("timezone", 0);
+            ArrayList<DayForecast> forecasts = parseForecasts(
+                    forecastData.getJSONArray("list"), metric, timezoneOffset);
             String localizedCityName = conditions.getString("name");
             float windSpeed = (float) windData.getDouble("speed");
             if (metric) {
@@ -156,52 +162,57 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
                     forecasts,
                     System.currentTimeMillis());
 
-            log(TAG, "Weather updated: " + w);
             return w;
         } catch (JSONException e) {
-            Log.w(TAG, "Received malformed weather data (selection = " + selection
-                    + ", lang = " + locale + ")", e);
+            Log.w(TAG, "Received malformed weather data");
         }
 
         return null;
     }
 
-    private ArrayList<DayForecast> parseForecasts(JSONArray forecasts, boolean metric) throws JSONException {
-        ArrayList<DayForecast> result = new ArrayList<DayForecast>();
-        int count = forecasts.length();
-
-        if (count == 0) {
+    private ArrayList<DayForecast> parseForecasts(JSONArray forecasts, boolean metric,
+            int timezoneOffset) throws JSONException {
+        if (forecasts.length() == 0) {
             throw new JSONException("Empty forecasts array");
         }
-        for (int i = 0; i < count; i++) {
-            DayForecast item = null;
+
+        SimpleDateFormat dayFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+        dayFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
+        LinkedHashMap<String, ForecastAccumulator> daily = new LinkedHashMap<>();
+        for (int i = 0; i < forecasts.length(); i++) {
             try {
                 JSONObject forecast = forecasts.getJSONObject(i);
                 JSONObject conditionData = forecast.getJSONObject("main");
                 JSONObject data = forecast.getJSONArray("weather").getJSONObject(0);
-                item = new DayForecast(
-                        /* low */ sanitizeTemperature(conditionData.getDouble("temp_min"), metric),
-                        /* high */ sanitizeTemperature(conditionData.getDouble("temp_max"), metric),
-                        /* condition */ data.getString("main"),
-                        /* conditionCode */ mapConditionIconToCode(
-                                data.getString("icon"), data.getInt("id")),
-                        "NaN",
-                        metric);
+                long localSeconds = forecast.getLong("dt") + timezoneOffset;
+                String date = dayFormat.format(new Date(localSeconds * 1000L));
+                ForecastAccumulator accumulator = daily.get(date);
+                if (accumulator == null) {
+                    if (daily.size() >= FORECAST_DAYS) {
+                        break;
+                    }
+                    accumulator = new ForecastAccumulator(date);
+                    daily.put(date, accumulator);
+                }
+                int localHour = (int) Math.floorMod(localSeconds, 24L * 60L * 60L) / 3600;
+                accumulator.add(
+                        sanitizeTemperature(conditionData.getDouble("temp_min"), metric),
+                        sanitizeTemperature(conditionData.getDouble("temp_max"), metric),
+                        data.getString("main"),
+                        mapConditionIconToCode(data.optString("icon"), data.getInt("id")),
+                        localHour);
             } catch (JSONException e) {
-                Log.w(TAG, "Invalid forecast for day " + i + " creating dummy", e);
-                item = new DayForecast(
-                        /* low */ 0,
-                        /* high */ 0,
-                        /* condition */ "",
-                        /* conditionCode */ -1,
-                        "NaN",
-                        metric);
+                Log.w(TAG, "Ignoring malformed forecast entry");
             }
-            result.add(item);
         }
-        // clients assume there are 5  entries - so fill with dummy if needed
-        if (result.size() < 5) {
-            for (int i = result.size(); i < 5; i++) {
+
+        ArrayList<DayForecast> result = new ArrayList<>(FORECAST_DAYS);
+        for (ForecastAccumulator accumulator : daily.values()) {
+            result.add(accumulator.toForecast(metric));
+        }
+        // Clients assume exactly five entries; fill only genuinely unavailable days.
+        if (result.size() < FORECAST_DAYS) {
+            for (int i = result.size(); i < FORECAST_DAYS; i++) {
                 Log.w(TAG, "Missing forecast for day " + i + " creating dummy");
                 DayForecast item = new DayForecast(
                         /* low */ 0,
@@ -214,6 +225,34 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
             }
         }
         return result;
+    }
+
+    private static final class ForecastAccumulator {
+        private final String mDate;
+        private float mLow = Float.POSITIVE_INFINITY;
+        private float mHigh = Float.NEGATIVE_INFINITY;
+        private String mCondition = "";
+        private int mConditionCode = -1;
+        private int mBestHourDistance = Integer.MAX_VALUE;
+
+        ForecastAccumulator(String date) {
+            mDate = date;
+        }
+
+        void add(float low, float high, String condition, int conditionCode, int localHour) {
+            mLow = Math.min(mLow, low);
+            mHigh = Math.max(mHigh, high);
+            int hourDistance = Math.abs(localHour - 12);
+            if (hourDistance < mBestHourDistance) {
+                mBestHourDistance = hourDistance;
+                mCondition = condition;
+                mConditionCode = conditionCode;
+            }
+        }
+
+        DayForecast toForecast(boolean metric) {
+            return new DayForecast(mLow, mHigh, mCondition, mConditionCode, mDate, metric);
+        }
     }
 
     // OpenWeatherMap sometimes returns temperatures in Kelvin even if we ask it
@@ -265,8 +304,11 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
     }
 
     private int mapConditionIconToCode(String icon, int conditionId) {
-    long ut2 = System.currentTimeMillis() / 1000L;
-        if ((sunrise < ut2) && (sunset > ut2)){
+        long nowSeconds = System.currentTimeMillis() / 1000L;
+        boolean isDay = !TextUtils.isEmpty(icon)
+                ? icon.endsWith("d")
+                : (sunrise < nowSeconds && sunset > nowSeconds);
+        if (isDay) {
             // First, use condition ID for specific cases
             switch (conditionId) {
                 // Thunderstorms
@@ -454,11 +496,7 @@ public class OpenWeatherMapProvider extends AbstractWeatherProvider {
     }
 
     private String getAPIKey() {
-        try {
-            return mContext.getResources().getString(R.string.owm_api_key);
-        } catch (Resources.NotFoundException e) {
-        }
-        return null;
+        return Config.getOpenWeatherMapApiKey(mContext);
     }
 
     public boolean shouldRetry() {

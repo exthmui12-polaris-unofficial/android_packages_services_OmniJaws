@@ -1,87 +1,51 @@
-About
------
-OmniJaws "Just another weather service"
-is a minimized service to fetch weather data from OpenWeatherMap.
+# OmniJaws for exTHmUI 12
 
-OpenWeatherMap API
-http://openweathermap.org/current
+OmniJaws is a small weather service, signed system content provider, and optional
+home-screen widget for exTHmUI 12.
 
-IMPORTANT: please request your own API key from OpenWeatherMap at
-https://openweathermap.org/appid#get
-and enter it here
-https://github.com/omnirom/android_packages_services_OmniJaws/blob/android-8.1/res/values/config.xml
+## Defaults and privacy
 
-Thanks to the original creators and contributors of the LockClock app
-https://github.com/CyanogenMod/android_packages_apps_LockClock
+- The service and lock-screen weather are disabled by default.
+- The default provider is MET Norway, using metric units and a two-hour interval.
+- Automatic location accepts Android 12 approximate or precise foreground location.
+  Periodic automatic-location updates are scheduled only after the user separately
+  grants background location in Android settings.
+- Manual-city mode does not require location permission.
+- Network requests use HTTPS only. Cleartext traffic is disabled.
 
-It provided a lot of insights and knowledge how to do this
-Some parts of the code like the provider access have been taken
-from it with minor modificatioons. Please check the file copyright
-headers for the origins of the files.
+No shared provider credential is included in the ROM. OpenWeatherMap is optional and
+does not send a request until the user enters their own key in OmniJaws settings. Keys
+are stored in credential-protected app preferences and are not shown in summaries or
+written to logcat. Users can obtain a key from:
 
-If you already include LockClock with your ROM you should
-consider if you really need this. The provider API is similiar
-and you dont need two different providers.
+https://openweathermap.org/appid
 
-The default condition icon pack has also been extracted from
-LockClock
+## Provider access
 
-Client access
------
-Here is a client code example using the content provider
-to access weather data
-https://github.com/omnirom/android_packages_services_OmniJaws/blob/android-8.1/src/org/omnirom/omnijaws/client/OmniJawsClient.java
+Weather and settings data are exposed at:
 
-Broadcasts and content observers
------
-There are two ways to register for changes on weather data
-
-Using ContentObserver on URI
-```java
+```text
 content://org.omnirom.omnijaws.provider/weather
+content://org.omnirom.omnijaws.provider/settings
 ```
 
-Using broadcasts
-```java
-private static final String ACTION_BROADCAST = "org.omnirom.omnijaws.WEATHER_UPDATE";
-private static final String ACTION_ERROR = "org.omnirom.omnijaws.WEATHER_ERROR";
-```
+The provider requires the signature permission
+`org.omnirom.omnijaws.READ_WEATHER`. System clients should observe these URIs for
+changes. Update/error broadcasts are restricted to the OmniJaws package and are not an
+external client API.
 
-Units
------
-Depending on the value of the metric setting the following units are used to display the weather
+## Condition icon packs
 
-```code
-Temperature:
-metric = "C"
-imperial = "F"
+An icon-pack activity can advertise the action `org.omnirom.WeatherIconPack`. The
+activity name supplies the drawable prefix, for example `outline_32`. Chronus-compatible
+packs using the category `com.dvtonder.chronus.ICON_PACK` are also discoverable.
 
-Wind speed:
-metric = "km/h"
-imperial = "mph"
-```
+The bundled outline set was imported by the upstream OmniJaws project with attribution
+to Emske Ltd. Redistribution status for other historical icon sets should be verified
+before publishing a new source repository.
 
-Condition icon packs support
------
-add activity with action "org.omnirom.WeatherIconPack"
-the name is used to defined the prefix for the image names
-default should be .weather.
+## Upstream
 
-```xml
-		<activity
-			android:name=".weather_vclouds"
-			android:label="LockClock (vclouds)" >
-			<intent-filter>
-				<action android:name="org.omnirom.WeatherIconPack" />
-
-				<category android:name="android.intent.category.DEFAULT" />
-			</intent-filter>
-		</activity>
-```
-
-An example can be found here https://github.com/maxwen/WeatherIconSample
-
-
-Icons:
-Outline weather icon  set is used with permission from  http://emske.com/25-outline-weather-icons/
-
+This Android 12 port is based on Corvus-AOSP OmniJaws commit
+`902a9682aa56b10ca9758cb26cb6e55a8a0fde64`. Individual source files retain their
+upstream GPL-2.0 or Apache-2.0 headers.

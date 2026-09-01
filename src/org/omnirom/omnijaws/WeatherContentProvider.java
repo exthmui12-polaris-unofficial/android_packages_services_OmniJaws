@@ -58,6 +58,8 @@ public class WeatherContentProvider extends ContentProvider {
     private static final String COLUMN_UNITS = "units";
     private static final String COLUMN_LOCATION = "location";
     private static final String COLUMN_SETUP = "setup";
+    private static final String COLUMN_LOCKSCREEN_ENABLED = "lockscreen_weather_enabled";
+    private static final String COLUMN_LOCKSCREEN_STYLE = "lockscreen_weather_style";
 
     private static final String[] PROJECTION_DEFAULT_WEATHER = new String[] {
             COLUMN_CURRENT_CITY_ID,
@@ -83,7 +85,9 @@ public class WeatherContentProvider extends ContentProvider {
             COLUMN_INTERVAL,
             COLUMN_UNITS,
             COLUMN_LOCATION,
-            COLUMN_SETUP
+            COLUMN_SETUP,
+            COLUMN_LOCKSCREEN_ENABLED,
+            COLUMN_LOCKSCREEN_STYLE
     };
 
     public static final String AUTHORITY = "org.omnirom.omnijaws.provider";
@@ -124,7 +128,10 @@ public class WeatherContentProvider extends ContentProvider {
                     .add(COLUMN_INTERVAL, Config.getUpdateInterval(mContext))
                     .add(COLUMN_UNITS, Config.isMetric(mContext) ? 0 : 1)
                     .add(COLUMN_LOCATION, Config.isCustomLocation(mContext) ? Config.getLocationName(mContext) : "")
-                    .add(COLUMN_SETUP, !Config.isSetupDone(mContext) && sCachedWeatherInfo == null ? 0 : 1);
+                    .add(COLUMN_SETUP, !Config.isSetupDone(mContext) && sCachedWeatherInfo == null ? 0 : 1)
+                    .add(COLUMN_LOCKSCREEN_ENABLED,
+                            Config.isLockscreenWeatherEnabled(mContext) ? 1 : 0)
+                    .add(COLUMN_LOCKSCREEN_STYLE, Config.getLockscreenWeatherStyle(mContext));
 
             return result;
         } else if (projectionType == URI_TYPE_WEATHER) {
@@ -155,7 +162,9 @@ public class WeatherContentProvider extends ContentProvider {
                 return result;
             }
         }
-        return null;
+        // Always return a cursor. Callers such as SystemUI may query while the
+        // service is disabled and should fail closed without a null dereference.
+        return result;
     }
 
     private String[] resolveProjection(String[] projection, int uriType) {

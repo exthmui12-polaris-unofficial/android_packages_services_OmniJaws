@@ -29,8 +29,10 @@ import android.content.pm.ResolveInfo;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.preference.EditTextPreference;
 import android.preference.CheckBoxPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
@@ -40,6 +42,7 @@ import android.preference.PreferenceManager;
 import android.preference.PreferenceScreen;
 import android.preference.SwitchPreference;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.widget.ListView;
@@ -67,12 +70,19 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
     private ListPreference mUpdateInterval;
     private CustomLocationPreference mLocation;
     private ListPreference mWeatherIconPack;
+    private EditTextPreference mOwmApiKey;
+    private SwitchPreference mBackgroundLocation;
+    private SwitchPreference mLockscreenWeather;
+    private ListPreference mLockscreenWeatherStyle;
     private Preference mUpdateStatus;
     private Handler mHandler = new Handler();
+    private boolean mRequestBackgroundAfterForeground;
+    private boolean mLaunchedBackgroundPermissionSettings;
     protected boolean mShowIconPack;
 
     private static final String PREF_KEY_CUSTOM_LOCATION_CITY = "weather_custom_location_city";
-    private static final int PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION = 0;
+    private static final int PERMISSIONS_REQUEST_FOREGROUND_LOCATION = 0;
+    private static final int PERMISSIONS_REQUEST_BACKGROUND_LOCATION = 1;
     private static final String WEATHER_ICON_PACK = "weather_icon_pack";
     private static final String PREF_KEY_UPDATE_STATUS = "update_status";
 
@@ -101,7 +111,8 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
 
         mProvider = (ListPreference) findPreference(Config.PREF_KEY_PROVIDER);
         mProvider.setOnPreferenceChangeListener(this);
-        int idx = mProvider.findIndexOfValue(mPrefs.getString(Config.PREF_KEY_PROVIDER, "0"));
+        int idx = mProvider.findIndexOfValue(mPrefs.getString(Config.PREF_KEY_PROVIDER,
+                Config.DEFAULT_PROVIDER));
         if (idx == -1) {
             idx = 0;
         }
@@ -119,7 +130,8 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
 
         mUpdateInterval = (ListPreference) findPreference(Config.PREF_KEY_UPDATE_INTERVAL);
         mUpdateInterval.setOnPreferenceChangeListener(this);
-        idx = mUpdateInterval.findIndexOfValue(mPrefs.getString(Config.PREF_KEY_UPDATE_INTERVAL, "2"));
+        idx = mUpdateInterval.findIndexOfValue(mPrefs.getString(Config.PREF_KEY_UPDATE_INTERVAL,
+                Config.DEFAULT_UPDATE_INTERVAL));
         if (idx == -1) {
             idx = 0;
         }
@@ -145,7 +157,7 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
             int valueIndex = mWeatherIconPack.findIndexOfValue(settingHeaderPackage);
             if (valueIndex == -1) {
                 // no longer found
-                settingHeaderPackage = DEFAULT_WEATHER_ICON_PACKAGE;
+                settingHeaderPackage = Config.DEFAULT_ICON_PACK;
                 Config.setIconPack(this, settingHeaderPackage);
                 valueIndex = mWeatherIconPack.findIndexOfValue(settingHeaderPackage);
             }
@@ -155,6 +167,37 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
         } else {
             prefScreen.removePreference(mWeatherIconPack);
         }
+
+        mOwmApiKey = (EditTextPreference) findPreference(Config.PREF_KEY_OWM_API_KEY);
+        if (mOwmApiKey != null) {
+            updateOwmApiKeySummary();
+            mOwmApiKey.setOnPreferenceChangeListener(this);
+        }
+
+        mBackgroundLocation = (SwitchPreference) findPreference(
+                Config.PREF_KEY_BACKGROUND_LOCATION);
+        if (mBackgroundLocation != null) {
+            mBackgroundLocation.setChecked(hasBackgroundLocationPermission());
+            mBackgroundLocation.setOnPreferenceChangeListener(this);
+        }
+
+        mLockscreenWeather = (SwitchPreference) findPreference(
+                Config.PREF_KEY_LOCKSCREEN_ENABLED);
+        mLockscreenWeatherStyle = (ListPreference) findPreference(
+                Config.PREF_KEY_LOCKSCREEN_STYLE);
+        if (mLockscreenWeather != null) {
+            mLockscreenWeather.setOnPreferenceChangeListener(this);
+        }
+        if (mLockscreenWeatherStyle != null) {
+            int styleIndex = mLockscreenWeatherStyle.findIndexOfValue(
+                    Config.getLockscreenWeatherStyle(this));
+            mLockscreenWeatherStyle.setValueIndex(styleIndex >= 0 ? styleIndex : 0);
+            mLockscreenWeatherStyle.setSummary(mLockscreenWeatherStyle.getEntry());
+            mLockscreenWeatherStyle.setEnabled(mLockscreenWeather != null
+                    && mLockscreenWeather.isChecked());
+            mLockscreenWeatherStyle.setOnPreferenceChangeListener(this);
+        }
+        updateOwmPreferenceVisibility();
         mUpdateStatus = findPreference(PREF_KEY_UPDATE_STATUS);
         queryLastUpdateTime();
     }
@@ -169,6 +212,17 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
             checkLocationPermissions();
             mTriggerPermissionCheck = false;
         }
+        if (mLaunchedBackgroundPermissionSettings) {
+            mLaunchedBackgroundPermissionSettings = false;
+            if (mBackgroundLocation != null) {
+                mBackgroundLocation.setChecked(hasBackgroundLocationPermission());
+            }
+            if (hasBackgroundLocationPermission() && Config.isEnabled(this)
+                    && !Config.isCustomLocation(this) && isProviderReady()) {
+                WeatherService.scheduleUpdate(this);
+            }
+            Config.notifySettingsChanged(this);
+        }
     }
 
     @Override
@@ -179,28 +233,34 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
                 mTriggerUpdate = true;
                 checkLocationEnabled();
             } else {
-                if (Config.getLocationName(this) != null) {
+                if (Config.isEnabled(this) && isProviderReady()
+                        && Config.getLocationName(this) != null) {
                     // city ids are provider specific - so we need to recheck
                     // cause provider migth be changed while unchecked
                     new WeatherLocationTask(this, Config.getLocationName(this), this).execute();
                 }
             }
+            Config.notifySettingsChanged(this);
             return true;
         } else if (preference == mEnable) {
             if (mEnable.isChecked()) {
                 if (!mCustomLocation.isChecked()) {
                     mTriggerUpdate = true;
                     checkLocationEnabled();
-                } else {
+                } else if (isProviderReady() && !TextUtils.isEmpty(
+                        Config.getLocationId(this))) {
                     WeatherService.scheduleUpdate(this);
                 }
             } else {
                 disableService();
             }
+            Config.notifySettingsChanged(this);
             queryLastUpdateTime();
             return true;
         } else if (preference == mUpdateStatus) {
-            WeatherService.startUpdate(this);
+            if (Config.isEnabled(this)) {
+                WeatherService.startUpdate(this);
+            }
             queryLastUpdateTime();
             return true;
         }
@@ -214,26 +274,38 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
             int idx = mProvider.findIndexOfValue(value);
             mProvider.setSummary(mProvider.getEntries()[idx]);
             mProvider.setValueIndex(idx);
-            if (mCustomLocation.isChecked() && Config.getLocationName(this) != null) {
+            updateOwmPreferenceVisibility();
+            boolean providerReady = Config.isProviderReady(this, value);
+            if (Config.isEnabled(this) && providerReady && mCustomLocation.isChecked()
+                    && Config.getLocationName(this) != null) {
                 // city ids are provider specific - so we need to recheck
                 new WeatherLocationTask(this, Config.getLocationName(this), this).execute();
-            } else {
-                WeatherService.startUpdate(this);
+            } else if (Config.isEnabled(this) && providerReady) {
+                WeatherService.scheduleUpdate(this);
+            } else if (!providerReady) {
+                WeatherService.cancelUpdate(this);
             }
+            notifySettingsChangedAfterCommit();
             return true;
         } else if (preference == mUnits) {
             String value = (String) newValue;
             int idx = mUnits.findIndexOfValue(value);
             mUnits.setSummary(mUnits.getEntries()[idx]);
             mUnits.setValueIndex(idx);
-            WeatherService.startUpdate(this);
+            if (Config.isEnabled(this)) {
+                WeatherService.startUpdate(this);
+            }
+            notifySettingsChangedAfterCommit();
             return true;
         } else if (preference == mUpdateInterval) {
             String value = (String) newValue;
             int idx = mUpdateInterval.findIndexOfValue(value);
             mUpdateInterval.setSummary(mUpdateInterval.getEntries()[idx]);
             mUpdateInterval.setValueIndex(idx);
-            WeatherService.scheduleUpdate(this);
+            if (Config.isEnabled(this)) {
+                WeatherService.scheduleUpdate(this);
+            }
+            notifySettingsChangedAfterCommit();
             queryLastUpdateTime();
             return true;
         } else if (preference == mWeatherIconPack) {
@@ -241,6 +313,53 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
             Config.setIconPack(this, value);
             int valueIndex = mWeatherIconPack.findIndexOfValue(value);
             mWeatherIconPack.setSummary(mWeatherIconPack.getEntries()[valueIndex]);
+            notifySettingsChangedAfterCommit();
+            return true;
+        } else if (preference == mOwmApiKey) {
+            String apiKey = String.valueOf(newValue).trim();
+            updateOwmApiKeySummary(apiKey);
+            if (Config.isEnabled(this) && mProvider != null && "0".equals(mProvider.getValue())) {
+                // EditTextPreference commits after this callback returns.
+                mHandler.postDelayed(() -> {
+                    if (TextUtils.isEmpty(apiKey)) {
+                        WeatherService.cancelUpdate(this);
+                    } else {
+                        WeatherService.scheduleUpdate(this);
+                    }
+                }, 200);
+            }
+            notifySettingsChangedAfterCommit();
+            return true;
+        } else if (preference == mBackgroundLocation) {
+            boolean requested = Boolean.TRUE.equals(newValue);
+            if (requested) {
+                if (!hasForegroundLocationPermission()) {
+                    mRequestBackgroundAfterForeground = true;
+                    checkLocationEnabled();
+                } else {
+                    requestBackgroundLocation();
+                }
+            } else if (hasBackgroundLocationPermission()) {
+                // Runtime permissions cannot be revoked by the app. Open this app's
+                // settings and reflect the actual grant when the user returns.
+                openAppPermissionSettings();
+            }
+            // This non-persistent switch represents the actual system grant; never let
+            // Preference persist a requested state before Android grants it.
+            return false;
+        } else if (preference == mLockscreenWeather) {
+            boolean enabled = Boolean.TRUE.equals(newValue);
+            if (mLockscreenWeatherStyle != null) {
+                mLockscreenWeatherStyle.setEnabled(enabled);
+            }
+            notifySettingsChangedAfterCommit();
+            return true;
+        } else if (preference == mLockscreenWeatherStyle) {
+            String value = String.valueOf(newValue);
+            int valueIndex = mLockscreenWeatherStyle.findIndexOfValue(value);
+            mLockscreenWeatherStyle.setValueIndex(valueIndex);
+            mLockscreenWeatherStyle.setSummary(mLockscreenWeatherStyle.getEntry());
+            notifySettingsChangedAfterCommit();
             return true;
         }
         return false;
@@ -297,16 +416,74 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
     }
 
     private void checkLocationPermissions() {
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[] { Manifest.permission.ACCESS_FINE_LOCATION },
-                    PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION);
-        } else {
-            if (mTriggerUpdate) {
+        if (!hasForegroundLocationPermission()) {
+            // Android 12 presents the approximate/precise choice for this combined request.
+            requestPermissions(new String[] {
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+            }, PERMISSIONS_REQUEST_FOREGROUND_LOCATION);
+            return;
+        }
+        if (mTriggerUpdate) {
+            mTriggerUpdate = false;
+            if (hasBackgroundLocationPermission()) {
                 WeatherService.scheduleUpdate(this);
-                mTriggerUpdate = false;
+            } else {
+                if (Config.isEnabled(this) && isProviderReady()) {
+                    // The activity is visible, so a one-shot foreground update can run.
+                    // Do not create the periodic alarm until background access is granted.
+                    WeatherService.startUpdate(this);
+                }
+                mRequestBackgroundAfterForeground = true;
             }
         }
+        if (mRequestBackgroundAfterForeground) {
+            mRequestBackgroundAfterForeground = false;
+            requestBackgroundLocation();
+        }
+    }
+
+    private boolean hasForegroundLocationPermission() {
+        return Config.hasForegroundLocationPermission(this);
+    }
+
+    private boolean hasBackgroundLocationPermission() {
+        return Config.hasBackgroundLocationPermission(this);
+    }
+
+    private void requestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || hasBackgroundLocationPermission()) {
+            if (mBackgroundLocation != null) {
+                mBackgroundLocation.setChecked(true);
+            }
+            return;
+        }
+        if (!hasForegroundLocationPermission()) {
+            mRequestBackgroundAfterForeground = true;
+            checkLocationEnabled();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.background_location_title)
+                .setMessage(R.string.location_permission_explanation)
+                .setPositiveButton(android.R.string.ok, (dialog, which) -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        openAppPermissionSettings();
+                    } else {
+                        requestPermissions(
+                                new String[] { Manifest.permission.ACCESS_BACKGROUND_LOCATION },
+                                PERMISSIONS_REQUEST_BACKGROUND_LOCATION);
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void openAppPermissionSettings() {
+        mLaunchedBackgroundPermissionSettings = true;
+        Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.fromParts("package", getPackageName(), null));
+        startActivity(intent);
     }
 
     private boolean doCheckLocationEnabled() {
@@ -324,17 +501,41 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
     @Override
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
         switch (requestCode) {
-            case PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION: {
-                // If request is cancelled, the result arrays are empty.
-                if (grantResults.length > 0
-                        && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            case PERMISSIONS_REQUEST_FOREGROUND_LOCATION: {
+                boolean granted = false;
+                for (int result : grantResults) {
+                    granted |= result == PackageManager.PERMISSION_GRANTED;
+                }
+                if (granted) {
                     if (mTriggerUpdate) {
-                        WeatherService.scheduleUpdate(this);
                         mTriggerUpdate = false;
+                        if (hasBackgroundLocationPermission()) {
+                            WeatherService.scheduleUpdate(this);
+                        } else {
+                            if (Config.isEnabled(this) && isProviderReady()) {
+                                WeatherService.startUpdate(this);
+                            }
+                            mRequestBackgroundAfterForeground = true;
+                        }
+                    }
+                    if (mRequestBackgroundAfterForeground) {
+                        mRequestBackgroundAfterForeground = false;
+                        requestBackgroundLocation();
+                    }
+                } else {
+                    mRequestBackgroundAfterForeground = false;
+                    if (mBackgroundLocation != null) {
+                        mBackgroundLocation.setChecked(false);
                     }
                 }
                 break;
             }
+            case PERMISSIONS_REQUEST_BACKGROUND_LOCATION:
+                if (mBackgroundLocation != null) {
+                    mBackgroundLocation.setChecked(hasBackgroundLocationPermission());
+                }
+                Config.notifySettingsChanged(this);
+                break;
         }
     }
 
@@ -344,13 +545,51 @@ public class SettingsActivityService extends PreferenceActivity implements OnPre
         WeatherService.stop(this);
     }
 
+    private boolean isProviderReady() {
+        String provider = mProvider == null ? Config.DEFAULT_PROVIDER : mProvider.getValue();
+        if (provider == null) {
+            provider = mPrefs.getString(Config.PREF_KEY_PROVIDER, Config.DEFAULT_PROVIDER);
+        }
+        return Config.isProviderReady(this, provider);
+    }
+
+    private void updateOwmPreferenceVisibility() {
+        if (mOwmApiKey == null) {
+            return;
+        }
+        String provider = mProvider == null ? Config.DEFAULT_PROVIDER : mProvider.getValue();
+        if (provider == null) {
+            provider = mPrefs.getString(Config.PREF_KEY_PROVIDER, Config.DEFAULT_PROVIDER);
+        }
+        mOwmApiKey.setEnabled("0".equals(provider));
+    }
+
+    private void updateOwmApiKeySummary() {
+        updateOwmApiKeySummary(mOwmApiKey == null ? null : mOwmApiKey.getText());
+    }
+
+    private void updateOwmApiKeySummary(String value) {
+        if (mOwmApiKey == null) {
+            return;
+        }
+        mOwmApiKey.setSummary(TextUtils.isEmpty(value == null ? null : value.trim())
+                ? R.string.owm_api_key_unset : R.string.owm_api_key_set);
+    }
+
+    private void notifySettingsChangedAfterCommit() {
+        mHandler.post(() -> Config.notifySettingsChanged(this));
+    }
+
     @Override
     public void applyLocation(WeatherInfo.WeatherLocation result) {
         Config.setLocationId(this, result.id);
         Config.setLocationName(this, result.city);
         mLocation.setText(result.city);
         mLocation.setSummary(result.city);
-        WeatherService.startUpdate(this);
+        if (Config.isEnabled(this) && isProviderReady()) {
+            WeatherService.scheduleUpdate(this);
+        }
+        Config.notifySettingsChanged(this);
     }
 
     private void getAvailableWeatherIconPacks(List<String> entries, List<String> values) {

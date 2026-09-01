@@ -18,24 +18,12 @@
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
 
     <string-array name="provider_entries" translatable="false">
-        <item>@string/provider_openweathermap</item>
         <item>@string/provider_metnorway</item>
-        <item>@string/provider_gismeteo</item>
-        <item>@string/provider_accuweather</item>
-        <item>@string/provider_darksky</item>
-        <item>@string/provider_twc</item>
-        <item>@string/provider_weatherbit</item>
-        <item>@string/provider_foreca</item>
+        <item>@string/provider_openweathermap</item>
     </string-array>
     <string-array name="provider_values" translatable="false">
-        <item>0</item>
         <item>1</item>
-        <item>2</item>
-        <item>3</item>
-        <item>4</item>
-        <item>5</item>
-        <item>7</item>
-        <item>8</item>
+        <item>0</item>
     </string-array>
     <string-array name="units_entries" translatable="false">
         <item>@string/unit_metric</item>
@@ -58,5 +46,14 @@
         <item>4</item>
         <item>6</item>
         <item>12</item>
+    </string-array>
+
+    <string-array name="lockscreen_weather_style_entries">
+        <item>@string/lockscreen_weather_style_compact</item>
+        <item>@string/lockscreen_weather_style_slice</item>
+    </string-array>
+    <string-array name="lockscreen_weather_style_values" translatable="false">
+        <item>compact</item>
+        <item>slice</item>
     </string-array>
 </resources>

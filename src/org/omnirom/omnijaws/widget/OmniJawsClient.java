@@ -25,6 +25,7 @@ import android.content.res.Resources;
 import android.database.Cursor;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
+import android.text.TextUtils;
 import android.util.Log;
 
 import org.omnirom.omnijaws.R;
@@ -220,6 +221,10 @@ public class OmniJawsClient {
     }
 
     public void loadIconPackage(String iconPack) {
+        if (TextUtils.isEmpty(iconPack) || iconPack.lastIndexOf(".") <= 0) {
+            loadDefaultIconsPackage();
+            return;
+        }
         mSettingIconPackage = iconPack;
         int idx = mSettingIconPackage.lastIndexOf(".");
         mPackageName = mSettingIconPackage.substring(0, idx);
@@ -252,6 +257,17 @@ public class OmniJawsClient {
         }
         try {
             int resId = mRes.getIdentifier(mIconPrefix + "_" + conditionCode, "drawable", mPackageName);
+            if (resId == 0) {
+                resId = mRes.getIdentifier(mIconPrefix + "_na", "drawable", mPackageName);
+            }
+            if (resId == 0 && !ICON_PACKAGE_DEFAULT.equals(mPackageName)) {
+                loadDefaultIconsPackage();
+                resId = mRes == null ? 0 : mRes.getIdentifier(
+                        ICON_PREFIX_DEFAULT + "_na", "drawable", ICON_PACKAGE_DEFAULT);
+            }
+            if (resId == 0) {
+                return null;
+            }
             return mRes.getDrawable(resId);
         } catch(Exception e) {
             Log.w(TAG, "Failed to get condition image for " + conditionCode);
@@ -267,17 +283,15 @@ public class OmniJawsClient {
         if (!isOmniJawsServiceInstalled()) {
             return false;
         }
-        final Cursor c = mContext.getContentResolver().query(SETTINGS_URI, SETTINGS_PROJECTION,
-                null, null, null);
-        if (c != null) {
-            int count = c.getCount();
-            if (count == 1) {
-                c.moveToPosition(0);
-                boolean enabled = c.getInt(0) == 1;
-                return enabled;
+        try (Cursor c = mContext.getContentResolver().query(SETTINGS_URI, SETTINGS_PROJECTION,
+                null, null, null)) {
+            if (c != null && c.getCount() == 1 && c.moveToFirst()) {
+                return c.getInt(0) == 1;
             }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Unable to read weather service state");
         }
-        return true;
+        return false;
     }
 
     public void setOmniJawsEnabled(boolean value) {

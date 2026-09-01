@@ -54,9 +54,14 @@ class WeatherLocationListener implements LocationListener {
                 LocationProvider lp = locationManager.getProvider(provider);
                 if (lp != null) {
                     Log.d(TAG, "LocationManager - Requesting single update");
-                    locationManager.requestSingleUpdate(provider, sInstance,
-                            appContext.getMainLooper());
-                    sInstance.setTimeoutAlarm();
+                    try {
+                        locationManager.requestSingleUpdate(provider, sInstance,
+                                appContext.getMainLooper());
+                        sInstance.setTimeoutAlarm();
+                    } catch (SecurityException e) {
+                        Log.w(TAG, "Location request denied");
+                        sInstance = null;
+                    }
                 }
             }
         }
@@ -69,7 +74,11 @@ class WeatherLocationListener implements LocationListener {
                 final LocationManager locationManager =
                     (LocationManager) appContext.getSystemService(Context.LOCATION_SERVICE);
                 Log.d(TAG, "Aborting location request after timeout");
-                locationManager.removeUpdates(sInstance);
+                try {
+                    locationManager.removeUpdates(sInstance);
+                } catch (SecurityException e) {
+                    Log.w(TAG, "Location removal denied");
+                }
                 sInstance.cancelTimeoutAlarm();
                 sInstance = null;
             }

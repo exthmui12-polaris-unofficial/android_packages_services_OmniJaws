@@ -86,7 +86,7 @@ public class WeatherService extends Service {
         public void onReceive(Context context, Intent intent) {
             if (DEBUG) Log.d(TAG, "screenStateListener:onReceive");
             if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
-                if (Config.isEnabled(context) && Config.isUpdateError(context)) {
+                if (Config.canScheduleUpdates(context) && Config.isUpdateError(context)) {
                     Log.i(TAG, "screenStateListener trigger update after update error");
                     WeatherService.startUpdate(context);
                 }
@@ -148,6 +148,20 @@ public class WeatherService extends Service {
             return START_NOT_STICKY;
         }
 
+        if (ACTION_ENABLE.equals(intent.getAction())) {
+            boolean enable = intent.getBooleanExtra(EXTRA_ENABLE, false);
+            if (DEBUG) Log.d(TAG, "Set enablement " + enable);
+            Config.setEnabled(this, enable);
+            if (!enable) {
+                cancelUpdate(this);
+                WeatherLocationListener.cancel(this);
+                // Stop immediately even if an update worker is currently running. The
+                // worker also checks the switch before every provider call.
+                stopSelf(startId);
+                return START_NOT_STICKY;
+            }
+        }
+
         if (mRunning) {
             Log.w(TAG, "Service running ... do nothing");
             return START_STICKY;
@@ -155,18 +169,10 @@ public class WeatherService extends Service {
 
         mWakeLock.acquire();
         try {
-            if (ACTION_ENABLE.equals(intent.getAction())) {
-                boolean enable = intent.getBooleanExtra(EXTRA_ENABLE, false);
-                if (DEBUG) Log.d(TAG, "Set enablement " + enable);
-                Config.setEnabled(this, enable);
-                if (!enable) {
-                    cancelUpdate(this);
-                }
-            }
 
             if (!Config.isEnabled(this)) {
                 Log.w(TAG, "Service started, but not enabled ... stopping");
-                Intent errorIntent = new Intent(ACTION_ERROR);
+                Intent errorIntent = new Intent(ACTION_ERROR).setPackage(getPackageName());
                 errorIntent.putExtra(EXTRA_ERROR, EXTRA_ERROR_DISABLED);
                 sendBroadcast(errorIntent);
                 stopSelf();
@@ -176,7 +182,7 @@ public class WeatherService extends Service {
             if (ACTION_CANCEL_LOCATION_UPDATE.equals(intent.getAction())) {
                 Log.w(TAG, "Service started, but location timeout ... stopping");
                 WeatherLocationListener.cancel(this);
-                Intent errorIntent = new Intent(ACTION_ERROR);
+                Intent errorIntent = new Intent(ACTION_ERROR).setPackage(getPackageName());
                 errorIntent.putExtra(EXTRA_ERROR, EXTRA_ERROR_LOCATION);
                 sendBroadcast(errorIntent);
                 Config.setUpdateError(this, true);
@@ -185,7 +191,7 @@ public class WeatherService extends Service {
 
             if (!isNetworkAvailable()) {
                 if (DEBUG) Log.d(TAG, "Service started, but no network ... stopping");
-                Intent errorIntent = new Intent(ACTION_ERROR);
+                Intent errorIntent = new Intent(ACTION_ERROR).setPackage(getPackageName());
                 errorIntent.putExtra(EXTRA_ERROR, EXTRA_ERROR_NETWORK);
                 sendBroadcast(errorIntent);
                 Config.setUpdateError(this, true);
@@ -209,6 +215,9 @@ public class WeatherService extends Service {
         super.onDestroy();
         if (DEBUG) Log.d(TAG, "onDestroy");
         unregisterScreenStateListener();
+        if (mHandlerThread != null) {
+            mHandlerThread.quitSafely();
+        }
     }
 
     private boolean isNetworkAvailable() {
@@ -227,8 +236,14 @@ public class WeatherService extends Service {
             Log.w(TAG, "locations disabled");
             return null;
         }
-        Location location = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER);
-        if (DEBUG) Log.d(TAG, "Current location is " + location);
+        Location location;
+        try {
+            location = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER);
+        } catch (SecurityException e) {
+            Log.w(TAG, "location permission no longer available");
+            return null;
+        }
+        if (DEBUG) Log.d(TAG, "Current location received");
 
         if (location != null && location.getAccuracy() > LOCATION_ACCURACY_THRESHOLD_METERS) {
             Log.w(TAG, "Ignoring inaccurate location");
@@ -249,7 +264,11 @@ public class WeatherService extends Service {
             if (TextUtils.isEmpty(locationProvider)) {
                 Log.e(TAG, "No available location providers matching criteria.");
             } else {
-                WeatherLocationListener.registerIfNeeded(this, locationProvider);
+                try {
+                    WeatherLocationListener.registerIfNeeded(this, locationProvider);
+                } catch (SecurityException e) {
+                    Log.w(TAG, "location request denied");
+                }
             }
         }
 
@@ -257,6 +276,10 @@ public class WeatherService extends Service {
     }
 
     public static void scheduleUpdate(Context context) {
+        if (!Config.canScheduleUpdates(context)) {
+            cancelUpdate(context);
+            return;
+        }
         cancelUpdate(context);
 
         final long interval = ALARM_INTERVAL_BASE * Config.getUpdateInterval(context);
@@ -272,12 +295,15 @@ public class WeatherService extends Service {
     }
 
     public static void cancelUpdate(Context context) {
+        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        if (DEBUG) Log.d(TAG, "Cancel pending update");
         if (mAlarm != null) {
-            AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
-            if (DEBUG) Log.d(TAG, "Cancel pending update");
-
             am.cancel(mAlarm);
             mAlarm = null;
+        } else {
+            // Recreate the same immutable PendingIntent after a process restart so an
+            // alarm created by an earlier process is cancelled as well.
+            am.cancel(alarmPending(context));
         }
     }
 
@@ -293,6 +319,10 @@ public class WeatherService extends Service {
                     int i = 0;
                     // retry max 3 times
                     while(i < RETRY_MAX_NUM) {
+                        if (!Config.isEnabled(WeatherService.this)) {
+                            Log.i(TAG, "Weather service disabled; aborting update");
+                            break;
+                        }
                         if (!Config.isCustomLocation(WeatherService.this)) {
                             if (checkPermissions()) {
                                 Location location = getCurrentLocation();
@@ -340,7 +370,8 @@ public class WeatherService extends Service {
                         Config.setUpdateError(WeatherService.this, true);
                     }
                     // send broadcast that something has changed
-                    Intent updateIntent = new Intent(ACTION_BROADCAST);
+                    Intent updateIntent = new Intent(ACTION_BROADCAST)
+                            .setPackage(getPackageName());
                     sendBroadcast(updateIntent);
                     mWakeLock.release();
                     mRunning = false;
@@ -350,7 +381,10 @@ public class WeatherService extends Service {
     }
 
     private boolean checkPermissions() {
-        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED;
     }
 
     private void registerScreenStateListener() {

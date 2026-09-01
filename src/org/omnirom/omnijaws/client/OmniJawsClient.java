@@ -213,16 +213,15 @@ public class OmniJawsClient {
         if (!mEnabled) {
             return false;
         }
-        final Cursor c = mContext.getContentResolver().query(SETTINGS_URI, SETTINGS_PROJECTION,
-                null, null, null);
-        if (c != null) {
-            int count = c.getCount();
-            if (count == 1) {
-                c.moveToPosition(0);
+        try (Cursor c = mContext.getContentResolver().query(SETTINGS_URI, SETTINGS_PROJECTION,
+                null, null, null)) {
+            if (c != null && c.getCount() == 1 && c.moveToFirst()) {
                 return c.getInt(0) == 1;
             }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Unable to read weather service state");
         }
-        return true;
+        return false;
     }
 
     private void updateUnits() {

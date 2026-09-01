@@ -102,6 +102,10 @@ public class WeatherAppWidgetProvider extends AppWidgetProvider {
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
+        if (action == null) {
+            super.onReceive(context, intent);
+            return;
+        }
         if (LOGGING) {
             Log.i(TAG, "onReceive: " + action);
         }
@@ -128,6 +132,9 @@ public class WeatherAppWidgetProvider extends AppWidgetProvider {
     @Override
     public void onUpdate(Context context, AppWidgetManager appWidgetManager, int[] appWidgetIds) {
         super.onUpdate(context, appWidgetManager, appWidgetIds);
+        for (int appWidgetId : appWidgetIds) {
+            updateWeather(context, appWidgetManager, appWidgetId);
+        }
     }
 
     @Override
@@ -221,8 +228,8 @@ public class WeatherAppWidgetProvider extends AppWidgetProvider {
         RemoteViews widget = new RemoteViews(context.getPackageName(), R.layout.weather_appwidget);
         widget.setImageViewBitmap(R.id.refresh, shadow(context.getResources(),
                 context.getResources().getDrawable(R.drawable.ic_menu_refresh)).getBitmap());
-        Intent refreshIntent = new Intent();
-        refreshIntent.setAction(REFRESH_BROADCAST);
+        Intent refreshIntent = new Intent(context, WeatherAppWidgetProvider.class)
+                .setAction(REFRESH_BROADCAST);
         widget.setOnClickPendingIntent(R.id.refresh,
                 PendingIntent.getBroadcast(context, 0, refreshIntent,
                       PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
@@ -231,7 +238,7 @@ public class WeatherAppWidgetProvider extends AppWidgetProvider {
         Intent configureIntent = new Intent(context, WeatherAppWidgetConfigure.class);
         configureIntent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId);
         widget.setOnClickPendingIntent(R.id.weather_data,
-                PendingIntent.getActivity(context, 0, configureIntent,
+                PendingIntent.getActivity(context, appWidgetId, configureIntent,
                       PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
 
         boolean withForcast = prefs.getBoolean(WeatherAppWidgetConfigure.KEY_WITH_FORECAST + "_" + appWidgetId, true);

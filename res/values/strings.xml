@@ -22,12 +22,6 @@
     <string name="units_title">Unit</string>
     <string name="provider_openweathermap" translatable="false">OpenWeatherMap</string>
     <string name="provider_metnorway" translatable="false">MET Norway</string>
-    <string name="provider_gismeteo" translatable="false">Gismeteo</string>
-    <string name="provider_accuweather" translatable="false">AccuWeather</string>
-    <string name="provider_darksky" translatable="false">Dark Sky</string>
-    <string name="provider_twc" translatable="false">The Weather Channel</string>
-    <string name="provider_weatherbit" translatable="false">Weatherbit</string>
-    <string name="provider_foreca" translatable="false">Foreca</string>
     <string name="weather_progress_title">Verifying location</string>
     <string name="weather_select_location">Select location</string>
     <string name="custom_location_title">Custom location</string>
@@ -66,6 +60,18 @@
     <string name="show_background_title">Background shadow</string>
     <string name="weather_config_title">Service settings</string>
     <string name="weather_config_summary"></string>
+    <string name="owm_api_key_title">OpenWeatherMap API key</string>
+    <string name="owm_api_key_summary">Only your own key is used; it is never included in the ROM.</string>
+    <string name="owm_api_key_set">API key configured</string>
+    <string name="owm_api_key_unset">No API key configured</string>
+    <string name="background_location_title">Allow background location</string>
+    <string name="background_location_summary">Required for automatic updates while the app is not visible.</string>
+    <string name="lockscreen_weather_title">Lockscreen weather</string>
+    <string name="lockscreen_weather_summary">Show weather below the lockscreen clock.</string>
+    <string name="lockscreen_weather_style_title">Lockscreen weather style</string>
+    <string name="lockscreen_weather_style_compact">Compact line</string>
+    <string name="lockscreen_weather_style_slice">Keyguard slice</string>
+    <string name="location_permission_explanation">Weather uses your approximate or precise location only after you enable the service. Background location is a separate optional permission.</string>
     <string name="omnijaws_service_error_marker" translatable="false">*</string>
     <string name="with_forecast_title">With 4-day forecast and details</string>
     <string name="widget_apply">Apply</string>

@@ -96,6 +96,18 @@ public class CustomLocationPreference extends EditTextPreference implements Weat
         setText(result.city);
         mDialog.dismiss();
         setSummary(result.city);
-        WeatherService.startUpdate(getContext());
+        // Selecting a city is valid without location permission. Only start network
+        // work when the master weather switch is enabled and the selected provider is
+        // ready (OpenWeatherMap requires a user-supplied key).
+        if (Config.isEnabled(getContext())) {
+            String provider = android.preference.PreferenceManager
+                    .getDefaultSharedPreferences(getContext())
+                    .getString(Config.PREF_KEY_PROVIDER, Config.DEFAULT_PROVIDER);
+            if (!"0".equals(provider) || !android.text.TextUtils.isEmpty(
+                    Config.getOpenWeatherMapApiKey(getContext()))) {
+                WeatherService.scheduleUpdate(getContext());
+            }
+        }
+        Config.notifySettingsChanged(getContext());
     }
 }
