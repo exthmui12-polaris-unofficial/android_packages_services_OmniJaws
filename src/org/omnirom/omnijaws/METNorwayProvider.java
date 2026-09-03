@@ -32,8 +32,8 @@ public class METNorwayProvider extends AbstractWeatherProvider {
     private static final String PART_COORDINATES =
             "lat=%f&lon=%f";
     private static final String URL_PLACES =
-            "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5"
-                    + "&addressdetails=1&accept-language=%s&q=%s";
+            "https://geocoding-api.open-meteo.com/v1/search?count=5&format=json"
+                    + "&language=%s&name=%s";
     private static final String URL_REVERSE =
             "https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1"
                     + "&zoom=10&accept-language=%s&lat=%f&lon=%f";
@@ -51,7 +51,7 @@ public class METNorwayProvider extends AbstractWeatherProvider {
 
     public WeatherInfo getLocationWeather(Location location, boolean metric) {
         String coordinates = String.format(Locale.US, PART_COORDINATES, location.getLatitude(), location.getLongitude());
-        return getAllWeather(coordinates, metric);
+        return getAllWeather(coordinates, metric, null);
     }
 
     public List<WeatherInfo.WeatherLocation> getLocations(String input) {
@@ -62,7 +62,10 @@ public class METNorwayProvider extends AbstractWeatherProvider {
             return null;
         }
         try {
-            JSONArray jsonResults = new JSONArray(response);
+            JSONArray jsonResults = new JSONObject(response).optJSONArray("results");
+            if (jsonResults == null) {
+                return new ArrayList<>();
+            }
             ArrayList<WeatherInfo.WeatherLocation> results = new ArrayList<>(jsonResults.length());
             int count = jsonResults.length();
 
@@ -70,24 +73,22 @@ public class METNorwayProvider extends AbstractWeatherProvider {
                 JSONObject result = jsonResults.getJSONObject(i);
                 WeatherInfo.WeatherLocation location = new WeatherInfo.WeatherLocation();
 
-                double latitude = result.getDouble("lat");
-                double longitude = result.getDouble("lon");
+                double latitude = result.getDouble("latitude");
+                double longitude = result.getDouble("longitude");
                 if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
                     continue;
                 }
-                JSONObject address = result.optJSONObject("address");
-                String city = firstNonEmpty(address, "city", "town", "village", "municipality",
-                        "suburb", "county");
+                String city = result.optString("name", "");
                 if (TextUtils.isEmpty(city)) {
-                    city = result.optString("display_name", input);
+                    city = input;
                 }
 
                 location.id = String.format(Locale.US, PART_COORDINATES, latitude, longitude);
                 location.city = city;
-                location.countryId = address == null ? ""
-                        : address.optString("country_code", "").toUpperCase(Locale.US);
-                location.country = address == null ? "" : address.optString("country", "");
-                location.postal = address == null ? "" : address.optString("postcode", "");
+                location.countryId = result.optString("country_code", "")
+                        .toUpperCase(Locale.US);
+                location.country = result.optString("country", "");
+                location.postal = firstNonEmpty(result, "admin2", "admin1");
                 results.add(location);
             }
 
@@ -113,10 +114,10 @@ public class METNorwayProvider extends AbstractWeatherProvider {
     }
 
     public WeatherInfo getCustomWeather(String id, boolean metric) {
-        return getAllWeather(id, metric);
+        return getAllWeather(id, metric, Config.getLocationName(mContext));
     }
 
-    private WeatherInfo getAllWeather(String coordinates, boolean metric) {
+    private WeatherInfo getAllWeather(String coordinates, boolean metric, String configuredCity) {
         String url = URL_WEATHER + coordinates;
         String response = retrieve(url);
         if (response == null) {
@@ -139,7 +140,10 @@ public class METNorwayProvider extends AbstractWeatherProvider {
                 weatherCode -= 1;
             }
 
-            String city = getNameLocality(coordinates);
+            String city = configuredCity;
+            if (TextUtils.isEmpty(city)) {
+                city = getNameLocality(coordinates);
+            }
             if (TextUtils.isEmpty(city)) {
                 city = mContext.getResources().getString(R.string.omnijaws_city_unknown);
             }

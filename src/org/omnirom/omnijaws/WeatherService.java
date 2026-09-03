@@ -21,6 +21,9 @@ import java.util.Date;
 
 import android.Manifest;
 import android.app.AlarmManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.BroadcastReceiver;
@@ -66,6 +69,8 @@ public class WeatherService extends Service {
     private static final long ALARM_INTERVAL_BASE = AlarmManager.INTERVAL_HOUR;
     private static final int RETRY_DELAY_MS = 5000;
     private static final int RETRY_MAX_NUM = 5;
+    private static final int NOTIFICATION_ID = 0x4f4d;
+    private static final String NOTIFICATION_CHANNEL_ID = "weather_updates";
 
     private HandlerThread mHandlerThread;
     private Handler mHandler;
@@ -122,20 +127,20 @@ public class WeatherService extends Service {
     private static void start(Context context, String action) {
         Intent i = new Intent(context, WeatherService.class);
         i.setAction(action);
-        context.startService(i);
+        context.startForegroundService(i);
     }
 
     public static void stop(Context context) {
         Intent i = new Intent(context, WeatherService.class);
         i.setAction(ACTION_ENABLE);
         i.putExtra(EXTRA_ENABLE, false);
-        context.startService(i);
+        context.startForegroundService(i);
     }
 
     private static PendingIntent alarmPending(Context context) {
         Intent intent = new Intent(context, WeatherService.class);
         intent.setAction(ACTION_ALARM);
-        return PendingIntent.getService(context, 0, intent,
+        return PendingIntent.getForegroundService(context, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
@@ -148,6 +153,8 @@ public class WeatherService extends Service {
             return START_NOT_STICKY;
         }
 
+        startForegroundIfNeeded();
+
         if (ACTION_ENABLE.equals(intent.getAction())) {
             boolean enable = intent.getBooleanExtra(EXTRA_ENABLE, false);
             if (DEBUG) Log.d(TAG, "Set enablement " + enable);
@@ -157,6 +164,7 @@ public class WeatherService extends Service {
                 WeatherLocationListener.cancel(this);
                 // Stop immediately even if an update worker is currently running. The
                 // worker also checks the switch before every provider call.
+                stopForeground(true);
                 stopSelf(startId);
                 return START_NOT_STICKY;
             }
@@ -164,7 +172,7 @@ public class WeatherService extends Service {
 
         if (mRunning) {
             Log.w(TAG, "Service running ... do nothing");
-            return START_STICKY;
+            return START_NOT_STICKY;
         }
 
         mWakeLock.acquire();
@@ -175,7 +183,8 @@ public class WeatherService extends Service {
                 Intent errorIntent = new Intent(ACTION_ERROR).setPackage(getPackageName());
                 errorIntent.putExtra(EXTRA_ERROR, EXTRA_ERROR_DISABLED);
                 sendBroadcast(errorIntent);
-                stopSelf();
+                stopForeground(true);
+                stopSelf(startId);
                 return START_NOT_STICKY;
             }
 
@@ -186,7 +195,9 @@ public class WeatherService extends Service {
                 errorIntent.putExtra(EXTRA_ERROR, EXTRA_ERROR_LOCATION);
                 sendBroadcast(errorIntent);
                 Config.setUpdateError(this, true);
-                return START_STICKY;
+                stopForeground(true);
+                stopSelf(startId);
+                return START_NOT_STICKY;
             }
 
             if (!isNetworkAvailable()) {
@@ -195,7 +206,9 @@ public class WeatherService extends Service {
                 errorIntent.putExtra(EXTRA_ERROR, EXTRA_ERROR_NETWORK);
                 sendBroadcast(errorIntent);
                 Config.setUpdateError(this, true);
-                return START_STICKY;
+                stopForeground(true);
+                stopSelf(startId);
+                return START_NOT_STICKY;
             }
 
             if (ACTION_ALARM.equals(intent.getAction())) {
@@ -207,7 +220,7 @@ public class WeatherService extends Service {
             mWakeLock.release();
         }
 
-        return START_STICKY;
+        return START_NOT_STICKY;
     }
 
     @Override
@@ -375,6 +388,8 @@ public class WeatherService extends Service {
                     sendBroadcast(updateIntent);
                     mWakeLock.release();
                     mRunning = false;
+                    stopForeground(true);
+                    stopSelf();
                 }
             }
          });
@@ -385,6 +400,23 @@ public class WeatherService extends Service {
                 == PackageManager.PERMISSION_GRANTED
                 || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void startForegroundIfNeeded() {
+        NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            nm.createNotificationChannel(new NotificationChannel(NOTIFICATION_CHANNEL_ID,
+                    getString(R.string.service_settings_title), NotificationManager.IMPORTANCE_LOW));
+        }
+        Notification.Builder builder = android.os.Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+                : new Notification.Builder(this);
+        builder.setSmallIcon(android.R.drawable.ic_popup_sync)
+                .setContentTitle(getString(R.string.service_settings_title))
+                .setContentText(getString(R.string.omnijaws_service_progress))
+                .setOngoing(true)
+                .setCategory(Notification.CATEGORY_SERVICE);
+        startForeground(NOTIFICATION_ID, builder.build());
     }
 
     private void registerScreenStateListener() {

@@ -49,6 +49,7 @@ public abstract class AbstractWeatherProvider {
     private static final Set<String> ALLOWED_HOSTS = new HashSet<>(Arrays.asList(
             "api.met.no",
             "api.openweathermap.org",
+            "geocoding-api.open-meteo.com",
             "nominatim.openstreetmap.org"));
     private static final String USER_AGENT = "exTHmUI/12 OmniJaws "
             + "(https://github.com/exthmui12-polaris-unofficial/"
