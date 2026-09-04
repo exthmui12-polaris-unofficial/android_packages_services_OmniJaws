@@ -23,6 +23,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.MalformedURLException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -33,6 +35,7 @@ import java.util.Locale;
 import java.util.Set;
 
 import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLSocketFactory;
 
 import android.content.Context;
 import android.location.Location;
@@ -46,6 +49,8 @@ public abstract class AbstractWeatherProvider {
     private static final int READ_TIMEOUT_MS = 15000;
     private static final int MAX_REDIRECTS = 3;
     private static final int MAX_RESPONSE_BYTES = 512 * 1024;
+    private static final String MET_NO_IP = "157.249.81.141";
+    private static final String NOMINATIM_IP = "151.101.129.91";
     private static final Set<String> ALLOWED_HOSTS = new HashSet<>(Arrays.asList(
             "api.met.no",
             "api.openweathermap.org",
@@ -78,6 +83,13 @@ public abstract class AbstractWeatherProvider {
                 return null;
             }
             request = (HttpsURLConnection) endpoint.openConnection();
+            if ("api.met.no".equals(endpointHost)) {
+                request.setSSLSocketFactory(new FixedAddressSSLSocketFactory(
+                        (SSLSocketFactory) SSLSocketFactory.getDefault(), MET_NO_IP, endpointHost));
+            } else if ("nominatim.openstreetmap.org".equals(endpointHost)) {
+                request.setSSLSocketFactory(new FixedAddressSSLSocketFactory(
+                        (SSLSocketFactory) SSLSocketFactory.getDefault(), NOMINATIM_IP, endpointHost));
+            }
             request.setInstanceFollowRedirects(false);
             request.setConnectTimeout(CONNECT_TIMEOUT_MS);
             request.setReadTimeout(READ_TIMEOUT_MS);
@@ -159,5 +171,57 @@ public abstract class AbstractWeatherProvider {
         // Do not emit URLs, API keys, coordinates, or provider response bodies. Keep this
         // hook for local debugging without making sensitive request data part of logcat.
         if (DEBUG) Log.d("WeatherService:" + tag, "provider event");
+    }
+
+    private static final class FixedAddressSSLSocketFactory extends SSLSocketFactory {
+        private final SSLSocketFactory delegate;
+        private final String address;
+        private final String hostName;
+
+        FixedAddressSSLSocketFactory(SSLSocketFactory delegate, String address, String hostName) {
+            this.delegate = delegate;
+            this.address = address;
+            this.hostName = hostName;
+        }
+
+        @Override
+        public Socket createSocket(String host, int port) throws IOException {
+            Socket raw = new Socket();
+            raw.connect(new InetSocketAddress(address, port), CONNECT_TIMEOUT_MS);
+            return delegate.createSocket(raw, host, port, true);
+        }
+
+        @Override
+        public Socket createSocket(Socket socket, String host, int port, boolean autoClose) throws IOException {
+            if (autoClose) socket.close();
+            Socket raw = new Socket();
+            raw.connect(new InetSocketAddress(address, port), CONNECT_TIMEOUT_MS);
+            return delegate.createSocket(raw, hostName, port, true);
+        }
+
+        @Override
+        public Socket createSocket(String host, int port, java.net.InetAddress localAddress, int localPort) throws IOException {
+            return createSocket(host, port);
+        }
+
+        @Override
+        public Socket createSocket(java.net.InetAddress host, int port) throws IOException {
+            return createSocket(hostName, port);
+        }
+
+        @Override
+        public Socket createSocket(java.net.InetAddress address, int port, java.net.InetAddress localAddress, int localPort) throws IOException {
+            return createSocket(hostName, port);
+        }
+
+        @Override
+        public String[] getDefaultCipherSuites() {
+            return delegate.getDefaultCipherSuites();
+        }
+
+        @Override
+        public String[] getSupportedCipherSuites() {
+            return delegate.getSupportedCipherSuites();
+        }
     }
 }
