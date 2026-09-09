@@ -138,10 +138,21 @@ public class WeatherService extends Service {
     }
 
     private static PendingIntent alarmPending(Context context) {
+        return alarmPending(context, 0);
+    }
+
+    private static PendingIntent alarmPending(Context context, int requestCode) {
         Intent intent = new Intent(context, WeatherService.class);
         intent.setAction(ACTION_ALARM);
-        return PendingIntent.getForegroundService(context, 0, intent,
+        return PendingIntent.getForegroundService(context, requestCode, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    /** Queue a one-shot foreground-service alarm that is safe to request from background code. */
+    public static void requestUpdate(Context context) {
+        AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
+        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, System.currentTimeMillis(),
+                alarmPending(context, 1));
     }
 
     @Override
@@ -289,6 +300,10 @@ public class WeatherService extends Service {
     }
 
     public static void scheduleUpdate(Context context) {
+        scheduleUpdate(context, true);
+    }
+
+    public static void scheduleUpdate(Context context, boolean immediate) {
         if (!Config.canScheduleUpdates(context)) {
             cancelUpdate(context);
             return;
@@ -303,8 +318,10 @@ public class WeatherService extends Service {
         if (DEBUG) Log.d(TAG, "Scheduling next update at " + new Date(due));
 
         mAlarm = alarmPending(context);
-        am.setInexactRepeating(AlarmManager.RTC, due, interval, mAlarm);
-        startUpdate(context);
+        am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, due, mAlarm);
+        if (immediate) {
+            startUpdate(context);
+        }
     }
 
     public static void cancelUpdate(Context context) {
@@ -388,6 +405,9 @@ public class WeatherService extends Service {
                     sendBroadcast(updateIntent);
                     mWakeLock.release();
                     mRunning = false;
+                    if (Config.canScheduleUpdates(WeatherService.this)) {
+                        scheduleUpdate(WeatherService.this, false);
+                    }
                     stopForeground(true);
                     stopSelf();
                 }

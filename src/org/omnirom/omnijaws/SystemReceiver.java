@@ -33,7 +33,9 @@ public class SystemReceiver extends BroadcastReceiver {
             if (Config.isEnabled(context)) {
                 if (DEBUG) Log.d(TAG, "boot completed kick alarm");
                 Config.clearLastUpdateTime(context);
-                WeatherService.scheduleUpdate(context);
+                // Boot receivers cannot start a location foreground service directly on
+                // Android 12; the repeating foreground-service alarm will perform the update.
+                WeatherService.scheduleUpdate(context, false);
             }
         }
     }
