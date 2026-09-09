@@ -1,5 +1,0 @@
-<resources>
-    <style name="Theme.AlertDialog" parent="@android:style/Theme.DeviceDefault.Dialog.Alert">
-        <item name="android:textAppearanceMedium">@*android:style/TextAppearance.DeviceDefault.Medium</item>
-    </style>
-</resources>
